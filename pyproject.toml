@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robustfolio"
+version = "0.1.0"
+description = "Machine-learning return forecasts and KL-robust portfolios: how much should a portfolio trust a model?"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.22", "scipy>=1.8", "pandas>=1.5", "scikit-learn>=1.2", "matplotlib>=3.5"]
+
+[project.optional-dependencies]
+notebooks = ["jupyter", "seaborn"]
+live = ["yfinance>=0.2"]
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+robustfolio = ["data/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
