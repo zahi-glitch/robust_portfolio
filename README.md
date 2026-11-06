@@ -46,7 +46,8 @@ the other half: building forecasts good enough to *help*, and choosing how much 
 ## Roadmap (about 14 weeks)
 
 - [ ] **Data and EDA** (weeks 1–3)
-  - [ ] more assets and a longer, less biased sample (`download_prices`: ETFs, sectors, an index's members)
+  - [x] more assets and a longer, less biased sample (`download_prices`: ETFs, sectors, an index's members): see "More data" below
+  - [ ] run the baseline on the new universes and compare
   - [ ] market data as features: interest rates, VIX, oil, the dollar
   - [ ] EDA notebook: distributions, fat tails, crises, correlations over time
 - [ ] **Features** (weeks 4–6)
@@ -74,6 +75,26 @@ python scripts/run_baseline.py        # the tables above, about 20 seconds
 jupyter lab notebooks/01_start_here.ipynb
 pytest                                # the checks
 ```
+
+## More data
+
+```bash
+pip install -e ".[live]"                                   # adds yfinance and lxml
+python scripts/fetch_data.py sectors                       # 9 sector ETFs, since 1998
+python scripts/fetch_data.py sp500@2005-01-03 --balance-from 2005-01-03
+```
+
+```python
+from robustfolio import load_universe, balance, history, coverage, returns_pct
+prices = load_universe("sectors", start="1998-01-01")      # etfs, sectors, dow30, nasdaq100, sp500, sp500@DATE
+history(prices)                                            # when does each asset start?
+prices, dropped = balance(prices, start="2005-01-03")      # rectangular table: more assets <-> longer sample
+returns = returns_pct(prices)
+```
+
+Biases, from smallest to largest: ETFs and sector funds have none at the asset level; `sp500@DATE` rebuilds the
+index as it was (Wikipedia's table of changes) but Yahoo lacks most delisted companies, so `coverage` reports
+what is missing; today's members (`sp500`, `dow30`) are survivors and flatter absolute returns.
 
 ## What is here
 

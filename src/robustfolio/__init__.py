@@ -8,10 +8,12 @@
     dro        the worst case over a KL ball (engine), with duality/ underneath
 """
 from .backtest import backtest, forecast_scores, performance, walk_forward_forecasts, wealth
-from .data import STOCKS, download_prices, load_prices, returns_pct
+from .data import (ETFS, SECTORS, STOCKS, balance, coverage, download_prices, history, index_members, load_prices,
+                   load_universe, returns_pct, sp500_members_as_of)
 from .forecast import HistoricalMean, SklearnForecaster
 from .portfolio import Strategy
 
 __all__ = ["backtest", "forecast_scores", "performance", "walk_forward_forecasts", "wealth",
-           "STOCKS", "download_prices", "load_prices", "returns_pct",
+           "STOCKS", "ETFS", "SECTORS", "download_prices", "load_prices", "load_universe", "returns_pct",
+           "balance", "history", "coverage", "index_members", "sp500_members_as_of",
            "HistoricalMean", "SklearnForecaster", "Strategy"]
