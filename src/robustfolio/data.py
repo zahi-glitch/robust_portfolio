@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import warnings
 from datetime import date
 from pathlib import Path
@@ -158,20 +159,29 @@ def balance(prices: pd.DataFrame, start=None, tolerance_days=7):
     else:
         start = pd.Timestamp(start)
         keep = [t for t in alive if first[t] <= start + pd.Timedelta(days=tolerance_days)]
+        if not keep:
+            raise ValueError(f"no asset has prices on {start.date()}: the earliest start is {first.min().date()}")
         full = full.loc[start:]
     out = full[keep].dropna()
     return out, [t for t in prices.columns if t not in keep]
 
 
 # --------------------------------------------------------------------------- index members (Wikipedia)
-def _wiki_tables(page) -> list:
+def _wiki_html(page) -> str:
     from urllib.request import Request, urlopen
     req = Request(_WIKI + page, headers={"User-Agent": "robustfolio (educational project)"})
+    return urlopen(req, timeout=30).read().decode("utf-8")
+
+
+def _read_tables(html, **kw) -> list:
     try:
-        html = urlopen(req, timeout=30).read().decode("utf-8")
-        return pd.read_html(io.StringIO(html))
+        return pd.read_html(io.StringIO(html), **kw)
     except ImportError as e:
         raise RuntimeError('pandas.read_html needs lxml: pip install -e ".[live]"') from e
+
+
+def _wiki_tables(page) -> list:
+    return _read_tables(_wiki_html(page))
 
 
 def _members_from_tables(tables, column, size) -> list:
@@ -189,21 +199,62 @@ def index_members(index="sp500") -> list:
     return _members_from_tables(_wiki_tables(page), column, size)
 
 
-def _parse_sp500_changes(tables) -> pd.DataFrame:
-    """Wikipedia's table of S&P 500 changes -> DataFrame(date, added, removed)."""
-    for t in tables:
-        cols = [" ".join(dict.fromkeys(map(str, c))) if isinstance(c, tuple) else str(c) for c in t.columns]
-        if any("Added" in c for c in cols) and any("Removed" in c for c in cols):
-            t = t.copy()
-            t.columns = cols
-            when = next(c for c in cols if "Date" in c)
-            add = next(c for c in cols if "Added" in c and "Ticker" in c)
-            rem = next(c for c in cols if "Removed" in c and "Ticker" in c)
-            out = pd.DataFrame({"date": pd.to_datetime(t[when], errors="coerce"),
-                                "added": t[add].map(lambda s: _yahoo_symbol(s) if pd.notna(s) else None),
-                                "removed": t[rem].map(lambda s: _yahoo_symbol(s) if pd.notna(s) else None)})
-            return out.dropna(subset=["date"]).reset_index(drop=True)
-    raise RuntimeError("no table of changes found: Wikipedia changed?")
+def _clean_ticker(s):
+    """'BRK.B' -> 'BRK-B', drops footnote marks like 'ABC[1]'; empty -> None."""
+    if pd.isna(s):
+        return None
+    s = re.sub(r"\[.*?\]", "", str(s)).strip()
+    return _yahoo_symbol(s) if s and s.lower() != "nan" else None
+
+
+def _as_grid(t: pd.DataFrame) -> pd.DataFrame:
+    """A table as a plain grid of cells: header rows (one per header level, if any) on top of the body."""
+    if isinstance(t.columns, pd.MultiIndex):
+        head = [list(t.columns.get_level_values(i)) for i in range(t.columns.nlevels)]
+    elif isinstance(t.columns, pd.RangeIndex):
+        head = []
+    else:
+        head = [list(t.columns)]
+    body = [list(r) for r in t.astype(object).to_numpy()]
+    return pd.DataFrame(head + body, dtype=object)
+
+
+def _parse_sp500_changes(raw_tables) -> pd.DataFrame:
+    """Wikipedia's table of S&P 500 changes -> DataFrame(date, added, removed).
+
+    Two-row headers (a spanning 'Added' above 'Ticker' and 'Security') may come as MultiIndex columns, as
+    plain header rows, or as flat labels, depending on the page and the pandas version: `_as_grid` makes
+    them all rows, and the Added/Removed rows are searched in the first three.
+    """
+    seen = []
+    for t in raw_tables:
+        t = _as_grid(t)
+        g = t.astype(object).where(t.notna(), "").astype(str).apply(lambda col: col.str.strip().str.lower())
+        for i in range(min(3, len(g))):                               # which of the first rows holds Added/Removed?
+            row = list(g.iloc[i])
+            if any(c.startswith("add") for c in row) and any(c.startswith("remov") for c in row):
+                sub = list(g.iloc[i + 1]) if i + 1 < len(g) else row
+                has_sub = any("ticker" in c or "symbol" in c for c in sub)
+
+                def find(group):
+                    for c, (r, u) in enumerate(zip(row, sub)):
+                        if r.startswith(group) and (not has_sub or "ticker" in u or "symbol" in u):
+                            return c
+                    raise RuntimeError(f"no ticker column under '{group}'")
+
+                when = next(c for c, r in enumerate(row) if "date" in r)
+                add, rem = find("add"), find("remov")
+                body = t.iloc[i + (2 if has_sub else 1):]
+                out = pd.DataFrame({"date": pd.to_datetime(body.iloc[:, when].astype(str).str.replace(r"\[.*?\]", "", regex=True), errors="coerce"),
+                                    "added": body.iloc[:, add].map(_clean_ticker),
+                                    "removed": body.iloc[:, rem].map(_clean_ticker)})
+                out = out.dropna(subset=["date"]).reset_index(drop=True)
+                if len(out):
+                    return out
+        if len(t) > 50 and t.shape[1] >= 4:
+            seen.append(f"  {t.shape}: " + " | ".join(map(str, t.iloc[0].tolist()[:6])))
+    raise RuntimeError("no table of changes found: Wikipedia changed? Large tables seen (shape: first row):\n"
+                       + "\n".join(seen[:6]))
 
 
 def members_as_of(when, current, changes) -> list:
@@ -219,9 +270,9 @@ def members_as_of(when, current, changes) -> list:
 
 def sp500_members_as_of(when) -> list:
     """The S&P 500 as it was on `when`, rebuilt from Wikipedia (accurate to its table of changes, ~1990 on)."""
-    tables = _wiki_tables(_INDEX_PAGES["sp500"][0])
-    current = _members_from_tables(tables, "Symbol", _INDEX_PAGES["sp500"][2])
-    return members_as_of(when, current, _parse_sp500_changes(tables))
+    html = _wiki_html(_INDEX_PAGES["sp500"][0])
+    current = _members_from_tables(_read_tables(html), "Symbol", _INDEX_PAGES["sp500"][2])
+    return members_as_of(when, current, _parse_sp500_changes(_read_tables(html)))
 
 
 def coverage(wanted, prices: pd.DataFrame) -> dict:

@@ -1,4 +1,5 @@
 """The new data tools, tested without internet: yfinance and Wikipedia are replaced by small fakes."""
+import io
 import sys
 import types
 
@@ -64,16 +65,53 @@ def test_members_as_of_undoes_changes():
     assert members_as_of("2000-01-01", CURRENT, CHANGES) == ["AAA", "AAA2", "OLD1"]
 
 
-def test_parse_wikipedia_tables():
-    cols = pd.MultiIndex.from_tuples([("Effective Date", "Effective Date"), ("Added", "Ticker"),
-                                      ("Added", "Security"), ("Removed", "Ticker"), ("Removed", "Security")])
-    t = pd.DataFrame([["September 1, 2020", "NEW2", "x", None, None], ["March 1, 2015", "NEW1", "y", "AAA.2", "z"]],
-                     columns=cols)
-    ch = _parse_sp500_changes([pd.DataFrame({"a": [1]}), t])
-    assert list(ch["added"]) == ["NEW2", "NEW1"] and ch["removed"].isna().tolist() == [True, False] and ch["removed"].iloc[1] == "AAA-2"
+CHANGES_HTML = """
+<table><thead>
+<tr><th rowspan="2">Effective Date</th><th colspan="2">Added</th><th colspan="2">Removed</th><th rowspan="2">Reason</th></tr>
+<tr><th>Ticker</th><th>Security</th><th>Ticker</th><th>Security</th></tr></thead>
+<tbody>
+<tr><td>September 1, 2020</td><td>NEW2</td><td>x</td><td></td><td></td><td>growth</td></tr>
+<tr><td>March 1, 2015</td><td>NEW1[1]</td><td>y</td><td>AAA.2</td><td>z</td><td>merger</td></tr>
+</tbody></table>"""
+PAD = "<table><tr><th>a</th></tr><tr><td>1</td></tr></table>"
+
+
+def test_parse_wikipedia_changes_table():
+    """A real HTML table with spanning headers, read both ways pandas can (header inferred, or header=None)."""
+    for kw in ({}, {"header": None}):
+        ch = _parse_sp500_changes(pd.read_html(io.StringIO(PAD + CHANGES_HTML), **kw))
+        check_changes(ch)
+    flat = pd.DataFrame([["Effective Date", "Added", "Added", "Removed", "Removed", "Reason"],     # header as plain rows
+                         ["Effective Date", "Ticker", "Security", "Ticker", "Security", "Reason"],
+                         ["September 1, 2020", "NEW2", "x", None, None, "growth"],
+                         ["March 1, 2015", "NEW1[1]", "y", "AAA.2", "z", "merger"]])
+    check_changes(_parse_sp500_changes([PAD_DF, flat]))
+
+
+PAD_DF = pd.DataFrame({"a": [1]})
+
+
+def check_changes(ch):
+    assert ch["added"].tolist() == ["NEW2", "NEW1"] and ch["added"].notna().all()
+    assert ch["removed"].isna().tolist() == [True, False] and ch["removed"].iloc[1] == "AAA-2"
     assert ch["date"].iloc[0] == pd.Timestamp("2020-09-01")
+    assert members_as_of("2016-01-01", ["NEW1", "NEW2", "AAA"], ch) == ["AAA", "NEW1"]
+
+
+def test_parse_failure_says_what_it_saw():
+    big = pd.DataFrame([[f"r{i}", 1, 2, 3] for i in range(60)])
+    with pytest.raises(RuntimeError, match="Large tables seen"):
+        _parse_sp500_changes([big])
+
+
+def test_members_table():
     members = pd.DataFrame({"Symbol": [f"S{i}" for i in range(450)] + ["BRK.B"]})
-    assert _members_from_tables([t, members], "Symbol", (400, 600))[-1] == "BRK-B"
+    assert _members_from_tables([pd.DataFrame({"a": [1]}), members], "Symbol", (400, 600))[-1] == "BRK-B"
+
+
+def test_balance_start_before_any_data_is_an_error():
+    with pytest.raises(ValueError, match="earliest start"):
+        balance(fake_prices(), start="2019-01-01")
 
 
 def test_coverage():

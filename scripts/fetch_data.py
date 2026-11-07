@@ -39,11 +39,12 @@ def main():
               f"the others, mostly delisted, are missing: that is the survivorship bias left\n")
 
     print("youngest assets:\n", h.head(8).to_string(), "\n")
-    print("assets kept if the sample starts at...")
-    for y in sorted({d.year for d in h["first"]}):
-        s = f"{y}-01-01"
-        kept, _ = balance(prices, start=s)
-        print(f"  {s}: {kept.shape[1]:4d} assets, {len(kept):5d} days")
+    print("assets kept if the sample starts at (latest start of each year; later years keep more assets)...")
+    firsts = h["first"].sort_values()
+    for y in sorted({d.year for d in firsts}):
+        cutoff = firsts[firsts.dt.year == y].max()
+        kept, _ = balance(prices, start=cutoff, tolerance_days=0)
+        print(f"  {cutoff.date()}: {kept.shape[1]:4d} assets, {len(kept):5d} days")
 
     if a.balance_from:
         kept, dropped = balance(prices, start=a.balance_from)
