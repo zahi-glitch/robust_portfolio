@@ -1,6 +1,6 @@
 # How much should a portfolio trust a machine-learning model?
 
-Data-science capstone (work in progress): machine-learning forecasts of stock returns, fed into portfolios
+Data-science project (work in progress): machine-learning forecasts of stock returns, fed into portfolios
 that trust them fully (Markowitz) or only partly (KL-robust optimisation).
 
 ## The idea
